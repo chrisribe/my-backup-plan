@@ -1,0 +1,4 @@
+---
+source_dir: /mnt/c/cribe/BkTest
+backup_dest_dir: /mnt/c/cribe/BkDest
+backup_time: "02:00"

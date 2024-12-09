@@ -1,0 +1,5 @@
+---
+- name: Setup local backup plan
+  hosts: localhost
+  roles:
+    - role: backup

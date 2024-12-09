@@ -1,0 +1,11 @@
+# roles/backup/templates/backup_config.j2
+
+# Backup configuration
+source_dir={{ source_dir }}
+backup_dest_dir={{ backup_dest_dir }}
+backup_time={{ backup_time }}
+
+# Exclude directories
+{% for dir in exclude_dirs %}
+exclude_dir={{ dir }}
+{% endfor %}

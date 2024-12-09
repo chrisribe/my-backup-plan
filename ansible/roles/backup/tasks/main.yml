@@ -1,0 +1,23 @@
+---
+- name: Ensure backup destination directory exists
+  file:
+    path: "{{ backup__dest_dir }}"
+    state: directory
+
+- name: Copy backup script
+  copy:
+    src: backup_script.sh
+    dest: /usr/local/bin/backup_script.sh
+    mode: '0755'
+
+- name: Configure backup
+  template:
+    src: backup_config.j2
+    dest: /etc/backup_config.conf
+
+- name: Schedule backup job
+  cron:
+    name: "Backup Job"
+    minute: "0"
+    hour: "2"
+    job: "/usr/local/bin/backup_script.sh"
