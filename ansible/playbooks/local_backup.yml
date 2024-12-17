@@ -1,5 +1,6 @@
 ---
 - name: Setup local backup plan
   hosts: localhost
+  become: true  # Add this line to run as root
   roles:
     - role: backup

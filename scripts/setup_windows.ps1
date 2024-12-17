@@ -29,9 +29,18 @@ if ($osVersion -ge "10.0") {
     wsl -e sudo apt update
     wsl -e sudo apt install -y ansible
 
-   # Run the Ansible backup plan
-   Write-Output "Running Ansible backup plan..."
-#   wsl -e ansible-playbook -i /mnt/c/cribe/GitRepos/chrisribe/my-backup-plan/inventory/hosts.ini /mnt/c//mnt/c/cribe/GitRepos/chrisribe/my-backup-plan/ansible/playbooks/windows/win10_and_up.yml
+    # Clone the Git repository into WSL
+    Write-Output "Cloning Git repository into WSL..."
+    wsl -e bash -c "cd ~ && git clone https://github.com/chrisribe/my-backup-plan.git"
+    wsl -e bash -c "chmod o-w ~/my-backup-plan"
+
+    # Checkout the desired branch (if needed)
+    Write-Output "Checking out 'multi-os' branch..."
+    wsl -e bash -c "cd ~/my-backup-plan && git checkout multi-os"
+
+    # Run the Ansible backup plan
+    Write-Output "Running Ansible backup plan..."
+    wsl -e bash -c "cd ~/my-backup-plan && ansible-playbook ansible/playbooks/local_backup.yml"
 
 } else {
     Write-Output "This script is designed for Windows 10 or later."
