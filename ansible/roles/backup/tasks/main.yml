@@ -1,7 +1,7 @@
 ---
 - name: Ensure backup destination directory exists
   file:
-    path: "{{ backup__dest_dir }}"
+    path: "{{ backup_dest_dir }}"
     state: directory
 
 - name: Copy backup script
