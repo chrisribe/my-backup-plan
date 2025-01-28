@@ -1,0 +1,11 @@
+{
+    "Frequency": "1h",
+    "Folders": [
+        {
+            "SourceFolder": "F:\\TestSync",
+            "DestinationFolder": "F:\\TestDest",
+            "Frequency":"daily",
+            "TargetTime":"3:00 PM"
+        }
+    ]
+}

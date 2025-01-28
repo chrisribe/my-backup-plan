@@ -30,32 +30,33 @@ function New-ScheduledTask {
   $trigger = switch -regex ($Frequency) {
     "^(\d+)s$" { 
       $interval = [int]$matches[1]
-      New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds($interval) -RepetitionInterval (New-TimeSpan -Seconds $interval) -RepetitionDuration (New-TimeSpan -Days 1)
+      New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds($interval) -RepetitionInterval (New-TimeSpan -Seconds $interval) -RepetitionDuration (New-TimeSpan -Days 3650) # 10 years
     }
     "^(\d+)m$" { 
       $interval = [int]$matches[1]
-      New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes($interval) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 1)
+      New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes($interval) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 3650) # 10 years
     }
     "^(\d+)h$" { 
       $interval = [int]$matches[1]
-      New-ScheduledTaskTrigger -Hourly -At (Get-Date).Date.AddHours((Get-Date).Hour + $interval)
+      New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddHours((Get-Date).Hour + $interval) -RepetitionInterval (New-TimeSpan -Hours $interval) -RepetitionDuration (New-TimeSpan -Days 3650) # 10 years
     }
     "^(\d+)d$" { 
       $interval = [int]$matches[1]
-      New-ScheduledTaskTrigger -Daily -At (Get-Date).Date.AddDays($interval)
+      New-ScheduledTaskTrigger -Daily -At (Get-Date).Date.AddDays($interval) -RepetitionDuration (New-TimeSpan -Days 3650) # 10 years
     }
     "^(\d+)w$" { 
       $interval = [int]$matches[1]
-      New-ScheduledTaskTrigger -Weekly -At (Get-Date).Date.AddDays(7 * $interval)
+      New-ScheduledTaskTrigger -Weekly -At (Get-Date).Date.AddDays(7 * $interval) -RepetitionDuration (New-TimeSpan -Days 3650) # 10 years
     }
     default { 
-      New-ScheduledTaskTrigger -Hourly -At (Get-Date).Date.AddHours((Get-Date).Hour + 1)
+      Write-Error "Invalid frequency: $Frequency"
+      exit 1
     }
   }
 
 
-  $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument " -File `"$ScriptPath`" -ConfigFile `"$ConfigFilePath`""
-  $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+  $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument " -WindowStyle Hidden -NoProfile -ExecutionPolicy ByPass -File `"$ScriptPath`" -ConfigFile `"$ConfigFilePath`""
+  $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
   Write-Host "Setting up scheduled task '$TaskName' to run every $Frequency."
@@ -87,6 +88,7 @@ function Remove-ScheduledTask {
   }
 }
 
+# Function to test if a backup should be run based on the frequency, last run time, day of week, and target time
 function Test-RunBackup {
   param (
     [string]$Frequency,
@@ -164,21 +166,44 @@ function Write-ConfigFile {
   $Data | ConvertTo-Json -Depth 3 | Set-Content $ConfigFilePath
 }
 
+# # Check if BurntToast module is installed
+# if (-not (Get-Module -ListAvailable -Name BurntToast)) {
+#   Write-Host "BurntToast module not found. Installing..."
+#   Install-Module -Name BurntToast -Force -Scope CurrentUser
+# }
+
+# # Import the BurntToast module
+# Import-Module BurntToast
+
+# # Function to send a notification
+# function Send-Notification {
+#   param (
+#     [string]$Title,
+#     [string]$Message
+#   )
+#   New-BurntToastNotification -Text $Title, $Message
+# }
+#Send-Notification -Title "Start" -Message "Backup script..."
+
+  ####  Main ####
   $TaskName = "BackupTask"
+  
+  # Remove the scheduled task if the -RemoveTask parameter is specified
+  if ($RemoveTask) {
+    Remove-ScheduledTask -TaskName $TaskName
+    exit 0
+  }
 
   # Read configuration file
   if ($ConfigFile) {
+    if ($ConfigFile -like "./*" -or $ConfigFile -like ".\*") {
+      $ConfigFile = Join-Path -Path (Split-Path -Parent $MyInvocation.MyCommand.Path) -ChildPath ($ConfigFile -replace "^\./", "" -replace "^\.\\", "")
+    }    
     $config = Read-ConfigFile -ConfigFilePath $ConfigFile
   }
   else {
     Write-Error "ConfigFile is required."
     exit 1
-  }
-
-  # Remove the scheduled task if the -RemoveTask parameter is specified
-  if ($RemoveTask) {
-    Remove-ScheduledTask -TaskName $TaskName
-    exit 0
   }
 
   # Validate configuration
