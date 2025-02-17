@@ -1,6 +1,9 @@
+# Probably better..... 
+# https://github.com/restic/restic/tree/v0.17.3
+
 param (
   [string]$ConfigFile,
-  [bool]$SetupTask
+  [string]$optionFlag
 )
 
 # Function to read configuration file
@@ -89,7 +92,7 @@ function Remove-ScheduledTask {
 }
 
 # Function to test if a backup should be run based on the frequency, last run time, day of week, and target time
-function Test-RunBackup {
+function ShouldRunBackup {
   param (
     [string]$Frequency,
     [datetime]$LastRunTime,
@@ -166,6 +169,71 @@ function Write-ConfigFile {
   $Data | ConvertTo-Json -Depth 3 | Set-Content $ConfigFilePath
 }
 
+function Get-ConfigFileData {
+  param (
+      [string]$CommandPath,
+      [string]$ConfigFile
+  )
+
+  # Read configuration file
+  if ($ConfigFile) {
+    
+    if ($ConfigFile -like "./*" -or $ConfigFile -like ".\*") {
+      $ConfigFile = Join-Path -Path (Split-Path -Parent $CommandPath) -ChildPath ($ConfigFile -replace "^\./", "" -replace "^\.\\", "")
+    }    
+    $config = Read-ConfigFile -ConfigFilePath $ConfigFile
+  }
+  else {
+    Write-Error "ConfigFile is required."
+    exit 1
+  }
+
+  # Validate configuration
+  if (-not $config.Folders -or $config.Folders.Count -eq 0) {
+    Write-Error "No folders specified in the configuration file."
+    exit 1
+  }
+  return $config
+}
+
+
+function Get-ConfigValue($folderPair, $key, $defaultValue) {
+  if ($folderPair.$key) { 
+    return $folderPair.$key 
+  } else { 
+    return $defaultValue 
+  }
+}
+
+#Common robocopy exit codes:
+# 0: No errors occurred, and no files were copied.
+# 1: All files were copied successfully.
+# 2: Some files were copied successfully, and some files were skipped.
+# 3: Some files were copied successfully, and some files failed to copy.
+# 5: Some files were copied successfully, and some files were skipped due to mismatched file attributes.
+# 6: Some files were copied successfully, and some files failed to copy due to mismatched file attributes.
+function RunBackup($SourceFolder, $DestinationFolder, $FolderKey, $trackingData, $TrackingFilePath) {
+  $robocopyCmd = "robocopy `"$SourceFolder`" `"$DestinationFolder`" /MIR /R:5 /W:10"
+  Write-Output "Executing: $robocopyCmd"
+  Invoke-Expression $robocopyCmd
+  if ($LASTEXITCODE -in 0, 1, 2) {
+    if ($LASTEXITCODE -eq 2) {
+      Write-Warning "Robocopy completed with some files skipped for $SourceFolder to $DestinationFolder."
+    }
+    $currentTime = Get-Date
+    $trackingData.folders.$FolderKey = @{ 
+      "SourceFolder" = $SourceFolder 
+      "DestinationFolder" = $DestinationFolder
+      "LastRunTime" = $currentTime.ToString("o") # Use ISO 8601 format for DateTime
+    }
+    # Save the updated tracking information to the JSON file after each successful backup
+    Write-ConfigFile -ConfigFilePath $TrackingFilePath -Data $trackingData
+  }
+  else {
+    Write-Error "Robocopy failed for $SourceFolder to $DestinationFolder with exit code $LASTEXITCODE"
+  }
+}
+
 # # Check if BurntToast module is installed
 # if (-not (Get-Module -ListAvailable -Name BurntToast)) {
 #   Write-Host "BurntToast module not found. Installing..."
@@ -187,36 +255,21 @@ function Write-ConfigFile {
 
   ####  Main ####
   $TaskName = "BackupTask"
+  $CommandPath = $MyInvocation.MyCommand.Path
   
   # Remove the scheduled task if the -RemoveTask parameter is specified
-  if ($RemoveTask) {
+  if ($optionFlag -eq "RemoveTask") {
     Remove-ScheduledTask -TaskName $TaskName
     exit 0
   }
 
-  # Read configuration file
-  if ($ConfigFile) {
-    if ($ConfigFile -like "./*" -or $ConfigFile -like ".\*") {
-      $ConfigFile = Join-Path -Path (Split-Path -Parent $MyInvocation.MyCommand.Path) -ChildPath ($ConfigFile -replace "^\./", "" -replace "^\.\\", "")
-    }    
-    $config = Read-ConfigFile -ConfigFilePath $ConfigFile
-  }
-  else {
-    Write-Error "ConfigFile is required."
-    exit 1
-  }
-
-  # Validate configuration
-  if (-not $config.Folders -or $config.Folders.Count -eq 0) {
-    Write-Error "No folders specified in the configuration file."
-    exit 1
-  }
+  # Read the configuration file
+  $config = Get-ConfigFileData -CommandPath $CommandPath -ConfigFile $ConfigFile
 
   # Set up the scheduled task if the -SetupTask parameter is specified
-  if ($SetupTask) {
+  if ($optionFlag -eq "SetupTask") {
     $ScriptPath = $MyInvocation.MyCommand.Path
     $Frequency = if ($config.Frequency) { $config.Frequency } else { "1h" }
-
 
     New-ScheduledTask -TaskName $TaskName -ScriptPath $ScriptPath -ConfigFilePath $ConfigFile -Frequency $Frequency
     write-host "Scheduled task has been set up."
@@ -234,41 +287,24 @@ function Write-ConfigFile {
     $trackingData = Read-ConfigFile $TrackingFilePath
   }
 
-
   # Loop through each folder pair and perform the backup using robocopy
   foreach ($folderPair in $config.Folders) {
     $SourceFolder = $folderPair.SourceFolder
     $DestinationFolder = $folderPair.DestinationFolder
-    $FolderFrequency = if ($folderPair.Frequency) { $folderPair.Frequency } else { "immediate" }
-    $DayOfWeek = if ($folderPair.DayOfWeek) { $folderPair.DayOfWeek } else { "" }
-    $TargetTime = if ($folderPair.TargetTime) { $folderPair.TargetTime } else { "" }
+    $FolderFrequency = Get-ConfigValue $folderPair "Frequency" "immediate"
+    $DayOfWeek = Get-ConfigValue $folderPair "DayOfWeek" ""
+    $TargetTime = Get-ConfigValue $folderPair "TargetTime" ""
     $FolderKey = Get-FolderKey -SourceFolder $SourceFolder -DestinationFolder $DestinationFolder
-
-    write-host "FolderKey: $FolderKey"
+  
     if (-not $SourceFolder -or -not $DestinationFolder) {
       Write-Error "SourceFolder and DestinationFolder are required for each folder pair."
       continue
     }
-
+  
     $LastRunTime = if ($trackingData.folders.PSObject.Properties.Name.Contains($FolderKey)) { [datetime]$trackingData.folders.$FolderKey.LastRunTime } else { [datetime]::MinValue }
-    $NeedsToRun = Test-RunBackup -Frequency $FolderFrequency -LastRunTime $LastRunTime -DayOfWeek $DayOfWeek -TargetTime $TargetTime
+    $NeedsToRun = ShouldRunBackup $FolderFrequency $LastRunTime $DayOfWeek $TargetTime
     if ($FolderFrequency -eq "immediate" -or $NeedsToRun -eq $true) {
-      $robocopyCmd = "robocopy `"$SourceFolder`" `"$DestinationFolder`" /MIR"
-      Write-Output "Executing: $robocopyCmd"
-      Invoke-Expression $robocopyCmd
-      if ($LASTEXITCODE -eq 0) {
-        $currentTime = Get-Date
-        $trackingData.folders.$FolderKey = @{ 
-          "SourceFolder" = $SourceFolder 
-          "DestinationFolder" = $DestinationFolder
-          "LastRunTime" = $currentTime.ToString("o") # Use ISO 8601 format for DateTime
-        }
-        # Save the updated tracking information to the JSON file after each successful backup
-        Write-ConfigFile -ConfigFilePath $TrackingFilePath -Data $trackingData
-      }
-      else {
-        Write-Error "Robocopy failed for $SourceFolder to $DestinationFolder with exit code $LASTEXITCODE"
-      }
+      RunBackup $SourceFolder $DestinationFolder $FolderKey $trackingData $TrackingFilePath
     }
     else {
       Write-Output "Skipping backup for $SourceFolder. Last run time: $LastRunTime"
